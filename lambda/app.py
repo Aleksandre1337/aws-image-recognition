@@ -9,25 +9,38 @@ from datetime import datetime
 import uuid
 from decimal import Decimal
 
-API_TOKEN = "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"
+API_TOKEN = "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"
 
 headers = {"Authorization": f"Bearer {API_TOKEN}"}
-API_URL = "https://api-inference.huggingface.co/models/facebook/detr-resnet-50"
+
+# Define a dictionary mapping model names to their corresponding URLs
+MODEL_API_URLS = {
+    "resnet50": "https://api-inference.huggingface.co/models/facebook/detr-resnet-50",
+    "mitb5": "https://api-inference.huggingface.co/models/nvidia/mit-b5",
+    "food": "https://api-inference.huggingface.co/models/Kaludi/food-category-classification-v2.0",
+    "age": "https://api-inference.huggingface.co/models/nateraw/vit-age-classifier",
+    "bird": "https://api-inference.huggingface.co/models/dima806/bird_species_image_detection",
+    "realestate": "https://api-inference.huggingface.co/models/andupets/real-estate-image-classification",
+    "emotions": "https://api-inference.huggingface.co/models/dima806/facial_emotions_image_detection"
+}
+
 DYNAMODB_TABLE = 'your-dynamo-db'
 s3_client = boto3.client("s3")
 
 
-def query_image(f):
-  http_request = Request(API_URL, data=f.read(), headers=headers)
-  with urlopen(http_request) as response:
-    result = response.read().decode()
-    print(result)
-  return result
+def query_image(model_name, f):
+    # Select the appropriate API URL based on the model name
+    api_url = MODEL_API_URLS[model_name]
+    http_request = Request(api_url, data=f.read(), headers=headers)
+    with urlopen(http_request) as response:
+        result = response.read().decode()
+        print(result)
+    return result
 
 
 def save_to_dynamodb(data):
   dynamodb = boto3.client('dynamodb')
-  timestamp = datetime.utcnow().replace(microsecond=0).isoformat()
+  timestamp = datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
   serializer = TypeSerializer()
   dynamo_serialized_data = []
   for item in json.loads(data, parse_float=Decimal):
@@ -73,24 +86,27 @@ def save_to_dynamodb(data):
 
 
 def lambda_handler(event, _):
-  pprint(event)
-  for record in event.get("Records"):
-    bucket = record.get("s3").get("bucket").get("name")
-    key = record.get("s3").get("object").get("key")
+    pprint(event)
+    for record in event.get("Records"):
+        bucket = record.get("s3").get("bucket").get("name")
+        key = record.get("s3").get("object").get("key")
 
-    print("Bucket", bucket)
-    print("Key", key)
+        print("Bucket", bucket)
+        print("Key", key)
 
-    # Download file from bucket
-    file = io.BytesIO()
-    s3_client.download_fileobj(Bucket=bucket, Key=key, Fileobj=file)
-    file.seek(0)
+        # Download file from bucket
+        file = io.BytesIO()
+        s3_client.download_fileobj(Bucket=bucket, Key=key, Fileobj=file)
+        file.seek(0)
 
-    # Send file to Huggingface API
-    result = query_image(file)
-    print("result", result)
+        # Extract the model name from the event
+        model_name = event.get("model_name")  # Assuming the model name is passed in the event
 
-    # save data to DynamoDB
-    save_to_dynamodb(result)
+        # Send file to Huggingface API using the selected model
+        result = query_image(model_name, file)
+        print("result", result)
 
-  return {"statusCode": 200, "body": "Done!"}
+        # Save data to DynamoDB
+        save_to_dynamodb(result)
+
+    return {"statusCode": 200, "body": "Done!"}

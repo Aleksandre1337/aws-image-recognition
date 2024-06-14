@@ -1,19 +1,16 @@
 import io
 import json
+import boto3
+import base64
+import time
+import uuid
 from pprint import pprint
 from urllib.request import urlopen, Request
-import boto3
+from datetime import datetime
+from decimal import Decimal
 from boto3.dynamodb.types import TypeSerializer
 from botocore.exceptions import ClientError
-from datetime import datetime
-import uuid
-from decimal import Decimal
 
-API_TOKEN = "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"
-
-headers = {"Authorization": f"Bearer {API_TOKEN}"}
-
-# Define a dictionary mapping model names to their corresponding URLs
 MODEL_API_URLS = {
     "resnet50": "https://api-inference.huggingface.co/models/facebook/detr-resnet-50",
     "mitb5": "https://api-inference.huggingface.co/models/nvidia/mit-b5",
@@ -24,89 +21,102 @@ MODEL_API_URLS = {
     "emotions": "https://api-inference.huggingface.co/models/dima806/facial_emotions_image_detection"
 }
 
-DYNAMODB_TABLE = 'your-dynamo-db'
+DYNAMODB_TABLE = 'image-recognition'
 s3_client = boto3.client("s3")
 
+def query_image(model_name, API_TOKEN, b64_image):
+    api_url = MODEL_API_URLS.get(model_name)
+    if not api_url:
+        raise ValueError(f"Model name '{model_name}' is not valid.")
 
-def query_image(model_name, f):
-    # Select the appropriate API URL based on the model name
-    api_url = MODEL_API_URLS[model_name]
-    http_request = Request(api_url, data=f.read(), headers=headers)
-    with urlopen(http_request) as response:
-        result = response.read().decode()
-        print(result)
-    return result
+    print(f"Querying model: {model_name} at URL: {api_url}")
 
+    image_bytes = base64.b64decode(b64_image)
+    file = io.BytesIO(image_bytes)
+    http_request = Request(api_url, data=file.read(), headers={
+      "Authorization": f'Bearer {API_TOKEN}'
+    })
+
+    max_retries = 5
+    backoff_factor = 1  # in seconds
+
+    for attempt in range(max_retries):
+        try:
+            with urlopen(http_request) as response:
+                result = response.read().decode()
+                print(result)
+            return result
+        except Exception as e:
+            if attempt < max_retries - 1:
+                sleep_time = backoff_factor * (2 ** attempt)
+                print(f"Request failed, retrying in {sleep_time} seconds...")
+                time.sleep(sleep_time)
+            else:
+                print(f"Max retries reached. Error: {e}")
+                raise e
+
+def upload_image_to_s3(bucket_name, base_64, file):
+    try:
+        s3_client.put_object(Body=base_64, Bucket=bucket_name, Key=file)
+        print("Successfully uploaded image to S3")
+    except Exception as e:
+        print(f"Error uploading to S3: {e}")
+        raise e
 
 def save_to_dynamodb(data):
-  dynamodb = boto3.client('dynamodb')
-  timestamp = datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
-  serializer = TypeSerializer()
-  dynamo_serialized_data = []
-  for item in json.loads(data, parse_float=Decimal):
-    dynamo_serialized_item = {'M':{}}
-    for key, value in item.items():
-      if isinstance(value, (float, Decimal)):
-        dynamo_serialized_item['M'][key] = {'N': str(value)}
-      elif isinstance(value, dict):
-        dynamo_serialized_item['M'][key] = {
-          'M': {k: serializer.serialize(v)
-                for k, v in value.items()}
-        }
-      else:
-        dynamo_serialized_item['M'][key] = {'S': str(value)}
-    dynamo_serialized_data.append(dynamo_serialized_item)
+    dynamodb = boto3.client('dynamodb')
+    timestamp = datetime.now().replace(microsecond=0).isoformat()
+    serializer = TypeSerializer()
 
-  data_ready_to_be_saved = {
-    'id': {
-      'S': str(uuid.uuid1())
-    },
-    'createdAt': {
-      'S': timestamp
-    },
-    'updatedAt': {
-      'S': timestamp
-    },
-    'huggingJson': {
-      'L': dynamo_serialized_data
-    },
-    'huggingFaceStringData': {
-      'S': data
+    dynamo_serialized_data = []
+    for item in json.loads(data, parse_float=Decimal):
+        dynamo_serialized_item = {'M': {}}
+        for key, value in item.items():
+            if isinstance(value, (float, Decimal)):
+                dynamo_serialized_item['M'][key] = {'N': str(value)}
+            elif isinstance(value, dict):
+                dynamo_serialized_item['M'][key] = {
+                    'M': {k: serializer.serialize(v) for k, v in value.items()}
+                }
+            else:
+                dynamo_serialized_item['M'][key] = {'S': str(value)}
+        dynamo_serialized_data.append(dynamo_serialized_item)
+
+    data_ready_to_be_saved = {
+        'id': {'S': str(uuid.uuid1())},
+        'createdAt': {'S': timestamp},
+        'updatedAt': {'S': timestamp},
+        'huggingJson': {'L': dynamo_serialized_data},
+        'huggingFaceStringData': {'S': data}
     }
-  }
-  print(json.dumps(data_ready_to_be_saved))
+    print(json.dumps(data_ready_to_be_saved))
 
-  try:
-    dynamodb.put_item(TableName=DYNAMODB_TABLE, Item=data_ready_to_be_saved)
-    pass
-  except ClientError as e:
-    print(e.response['Error']['Message'])
-    raise e
-  return
-
+    try:
+        dynamodb.put_item(TableName=DYNAMODB_TABLE, Item=data_ready_to_be_saved)
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+        raise e
 
 def lambda_handler(event, _):
-    pprint(event)
-    for record in event.get("Records"):
-        bucket = record.get("s3").get("bucket").get("name")
-        key = record.get("s3").get("object").get("key")
+    print("Event: ", event)
 
-        print("Bucket", bucket)
-        print("Key", key)
+    body = json.loads(event.get('body', '{}'))
 
-        # Download file from bucket
-        file = io.BytesIO()
-        s3_client.download_fileobj(Bucket=bucket, Key=key, Fileobj=file)
-        file.seek(0)
+    required_keys = ['base64', 'model', 'apiToken']
+    for key in required_keys:
+        if key not in body:
+            return {"statusCode": 400, "body": f"Missing required key: {key}"}
 
-        # Extract the model name from the event
-        model_name = event.get("model_name")  # Assuming the model name is passed in the event
+    b64_image = body['base64']
+    model = body['model']
+    api_token = body['apiToken']
 
-        # Send file to Huggingface API using the selected model
-        result = query_image(model_name, file)
-        print("result", result)
+    try:
+        upload_image_to_s3("python-lambda-image-recognition", b64_image, 'image.png')
+        query_response = query_image(model, api_token, b64_image)
+        save_to_dynamodb(query_response)
+    except Exception as e:
+        print(f"Error in lambda handler: {e}")
+        return {"statusCode": 500, "body": str(e)}
 
-        # Save data to DynamoDB
-        save_to_dynamodb(result)
-
-    return {"statusCode": 200, "body": "Done!"}
+    return {"statusCode": 200, "body": query_response}

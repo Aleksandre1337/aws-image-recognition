@@ -28,18 +28,18 @@ def query_image(model_name, API_TOKEN, b64_image):
     api_url = MODEL_API_URLS.get(model_name)
     if not api_url:
         raise ValueError(f"Model name '{model_name}' is not valid.")
-
+    
     print(f"Querying model: {model_name} at URL: {api_url}")
-
+    
     image_bytes = base64.b64decode(b64_image)
     file = io.BytesIO(image_bytes)
     http_request = Request(api_url, data=file.read(), headers={
       "Authorization": f'Bearer {API_TOKEN}'
     })
-
+    
     max_retries = 5
-    backoff_factor = 1  # in seconds
-
+    backoff_factor = 1 
+    
     for attempt in range(max_retries):
         try:
             with urlopen(http_request) as response:
@@ -57,7 +57,9 @@ def query_image(model_name, API_TOKEN, b64_image):
 
 def upload_image_to_s3(bucket_name, base_64, file):
     try:
-        s3_client.put_object(Body=base_64, Bucket=bucket_name, Key=file)
+        image_data = base64.b64decode(base_64)
+        
+        s3_client.put_object(Body=image_data, Bucket=bucket_name, Key=file)
         print("Successfully uploaded image to S3")
     except Exception as e:
         print(f"Error uploading to S3: {e}")
@@ -67,7 +69,7 @@ def save_to_dynamodb(data):
     dynamodb = boto3.client('dynamodb')
     timestamp = datetime.now().replace(microsecond=0).isoformat()
     serializer = TypeSerializer()
-
+    
     dynamo_serialized_data = []
     for item in json.loads(data, parse_float=Decimal):
         dynamo_serialized_item = {'M': {}}
@@ -99,8 +101,16 @@ def save_to_dynamodb(data):
 
 def lambda_handler(event, _):
     print("Event: ", event)
-
-    body = json.loads(event.get('body', '{}'))
+    
+    try:
+        body = event.get('body', '{}')
+        print("Raw body: ", body)
+        
+        body = json.loads(body)
+        print("Parsed body: ", body)
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
+        return {"statusCode": 400, "body": "Invalid JSON format"}
 
     required_keys = ['base64', 'model', 'apiToken']
     for key in required_keys:
@@ -110,7 +120,7 @@ def lambda_handler(event, _):
     b64_image = body['base64']
     model = body['model']
     api_token = body['apiToken']
-
+    
     try:
         upload_image_to_s3("python-lambda-image-recognition", b64_image, 'image.png')
         query_response = query_image(model, api_token, b64_image)
@@ -118,5 +128,6 @@ def lambda_handler(event, _):
     except Exception as e:
         print(f"Error in lambda handler: {e}")
         return {"statusCode": 500, "body": str(e)}
-
+    
     return {"statusCode": 200, "body": query_response}
+

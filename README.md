@@ -23,7 +23,6 @@ This project combines AWS Lambda functions for image recognition with a Next.js 
 
 1. Clone the repository and navigate into the project directory.
 2. Install the dependencies:
-   \`\`\`bash
    npm install
    # or
    yarn
@@ -31,9 +30,7 @@ This project combines AWS Lambda functions for image recognition with a Next.js 
    pnpm install
    # or
    bun install
-   \`\`\`
 3. Start the development server:
-   \`\`\`bash
    npm run dev
    # or
    yarn dev
@@ -41,7 +38,6 @@ This project combines AWS Lambda functions for image recognition with a Next.js 
    pnpm dev
    # or
    bun dev
-   \`\`\`
 4. Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 ### API Routes

@@ -1,11 +1,18 @@
-import { Inter } from 'next/font/google';
+import ReturnedData from '@/components/ReturnedData';
+import UploadForm from '@/components/UploadForm';
+import Head from 'next/head';
+import { useState } from 'react';
 
-const inter = Inter({ subsets: ['latin'] });
+export default function HomePage() {
+	const [data, setData] = useState([]);
 
-export default function Home() {
 	return (
-		<main
-			className={`flex min-h-screen flex-col items-center justify-between p-24 ${inter.className}`}
-		></main>
+		<>
+			<Head>
+				<title>Image Recognition</title>
+			</Head>
+			<UploadForm setData={setData} />
+			<ReturnedData data={data} />
+		</>
 	);
 }

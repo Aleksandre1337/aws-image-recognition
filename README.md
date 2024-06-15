@@ -2,6 +2,8 @@
 
 This project combines AWS Lambda functions for image recognition with a Next.js frontend, providing a seamless integration for uploading images and displaying their classification results. The backend leverages various machine learning models hosted on Hugging Face for diverse image recognition tasks, including object detection, age classification, and emotion detection. The frontend is a simple yet powerful Next.js application that interacts with the Lambda functions to process and display the image recognition results.
 
+![](schema.svg)
+
 ## Features
 
 - **Multiple Model Support**: Utilizes different models from Hugging Face for various image recognition tasks.
